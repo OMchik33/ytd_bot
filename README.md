@@ -72,7 +72,7 @@ deactivate
 ```
 
 * Создаем сервис, добавляем в автозагрузку, запускаем бота.
-* 
+  
 `nano /etc/systemd/system/ytd_bot.service`
 
 ```bash
