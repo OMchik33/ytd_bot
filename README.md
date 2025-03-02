@@ -49,6 +49,7 @@ DOWNLOAD_BASE_URL = "https://ВАШДОМЕН.ru/1234567yourrandom" - здесь
         if (-f $request_filename) {
             add_header Content-Disposition "attachment; filename=$arg_filename";
         }
+}
 ```
 * Проверяем конфиг nginx и перезапускаем
   
