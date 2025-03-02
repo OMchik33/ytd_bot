@@ -49,7 +49,7 @@ main_keyboard = ReplyKeyboardMarkup(
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
-        await message.answer("Кто вы? Я вас не знаю!.")
+        await message.answer("Кто вы? Я вас не знаю. Вход только по партбилетам!")
         return
     await message.answer("Привет! Нажмите кнопки для выбора действия:", reply_markup=main_keyboard)
 
