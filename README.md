@@ -13,7 +13,7 @@
 `/download` папка для скачивания файлов
 
 
-* Скачиваем ytd_bot.sh в папку /root/ytd.
+* Скачиваем ytd_bot.py в папку /root/ytd.
 Делаем его исполняемым: `chmod +X /root/ytd/ytd_bot.sh`
 
 # НАСТРОЙКА
