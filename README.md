@@ -72,7 +72,9 @@ deactivate
 ```
 
 * Создаем сервис, добавляем в автозагрузку, запускаем бота.
+* 
 `nano /etc/systemd/system/ytd_bot.service`
+
 ```bash
 [Unit]
 Description=Telegram Bot Service
@@ -91,7 +93,9 @@ WantedBy=multi-user.target
 ```
 
 Включаем автозагрузку: `systemctl enable ytd_bot.service`
+
 Запускаем бот: `systemctl start ytd_bot.service`
+
 
 # ИСПОЛЬЗОВАНИЕ
 Для работы бота требуется плагин. Устанавливаем в браузер: https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc
