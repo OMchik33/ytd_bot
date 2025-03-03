@@ -66,7 +66,7 @@
 | ------------ | ------------ |
 | `python3 -m venv mybotenv`  | Создаем виртуальную среду mybotenv |
 | `source mybotenv/bin/activate` | Активируем виртуальную среду |
-| `pip install aiogram yt-dlp aiohttp` | Устанавливаем необходимое ПО |
+| `pip install aiogram yt-dlp` | Устанавливаем необходимое ПО |
 | `deactivate` | Выходим из виртуальной среды |
 
 5. **Добавляем в Crontab автоудаление скачанных более чем 60 минут назад файлов**
@@ -116,7 +116,6 @@ WantedBy=multi-user.target
 | Python | 3.12.3 |
 | aiogram  | 3.18.0 |
 |  yt-dlp  | 2025.2.19 |
-| aiohttp   | 3.11.13  |
 
 # ОТВЕТСТВЕННОСТЬ
 
