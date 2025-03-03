@@ -1,15 +1,11 @@
 import os
 import asyncio
-import aiohttp
 import logging
-from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
-from aiogram.types import FSInputFile, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 import yt_dlp
 import re
-import random
-import string
 from urllib.parse import quote
 import hashlib
 
