@@ -1,7 +1,7 @@
 import os
 import asyncio
 import logging
-import time  # Добавляем модуль time для временной метки
+import time
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
@@ -14,6 +14,7 @@ import json
 # Конфигурация
 BOT_TOKEN = "ВСТАВЬТЕСЮДАТОКЕНБОТА"
 ALLOWED_USERS = [ВАШ_ТГ_ID]
+SPECIAL_CODE = "secretcode12345"
 DOWNLOAD_PATH = "/download"
 COOKIES_PATH = "/root/ytd/cookies"
 DOWNLOAD_BASE_URL = "https://ВАШДОМЕН.ru/1234567yourrandom"
@@ -43,15 +44,20 @@ main_keyboard = ReplyKeyboardMarkup(
     persistent=True
 )
 
-# Start command
+# Запуск бота
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    args = message.text.split()[1] if len(message.text.split()) > 1 else ""
+    if args == SPECIAL_CODE:
+        # Временно добавляем пользователя в ALLOWED_USERS, если его там нет
+        if message.from_user.id not in ALLOWED_USERS:
+            ALLOWED_USERS.append(message.from_user.id)
     if message.from_user.id not in ALLOWED_USERS:
-        await message.answer("Кто вы? Я вас не знаю. Вход только по партбилетам!")
+        await message.answer("❌ Кто вы? Я вас не знаю! Доступ только по приглашению админисратора")
         return
     await message.answer("Привет! Нажмите кнопки для выбора действия:", reply_markup=main_keyboard)
 
-# Handle cookies upload
+# Обработчик загрузки куки файла
 @dp.message(lambda message: message.document and message.document.file_name.endswith('.txt'))
 async def handle_cookie_file(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
@@ -101,7 +107,7 @@ async def download_media(message: types.Message, url: str, quality: str = None):
         def sanitize_filename(title):
             # Разрешаем буквы (латинские и русские), цифры, точку, запятую, восклицательный знак, дефис, нижнее подчеркивание и пробел
             sanitized = re.sub(r'[^a-zA-Zа-яА-Я0-9\.,!\- _]', '', title)
-            # Удаляем лишние пробелы (если они не нужны)
+            # Удаляем лишние пробелы по краям названия
             sanitized = re.sub(r'\s+', ' ', sanitized).strip()
             return sanitized
         original_name = f"{sanitize_filename(title)}.{info['ext']}"  # Оригинальное имя файла
@@ -114,14 +120,14 @@ async def download_media(message: types.Message, url: str, quality: str = None):
         logger.error(f"Error: {e}")
         await status_message.edit_text(f"❌ Наводчик контужен: {e}")
 
-# Отправляем сообщение для скачивания видео
+# Отправляем сообщение при нажатии кнопки скачать видео
 @dp.message(lambda message: message.text == "📥 Download Video")
 async def request_video_url(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
     await message.answer("Отправьте ссылку на видео.")
 
-# Handle incoming URL
+# Проверяем сообщение на наличие URL
 @dp.message(lambda message: re.match(r'https?://', message.text))
 async def handle_url(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
@@ -141,7 +147,7 @@ async def handle_url(message: types.Message):
     buttons = []
     unique_qualities = set()
     for f in formats:
-        if f.get('height') and f['height'] >= 480:  # Фильтруем качества ниже 480p
+        if f.get('height') and f['height'] >= 480:  # Фильтруем качество ниже 480p
             quality = f"{f['height']}p"
             if quality not in unique_qualities:
                 unique_qualities.add(quality)
