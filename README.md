@@ -42,14 +42,18 @@
     # Локация для скачивания файлов
     location /1234567yourrandom/ {
         alias /download/;  # Указываем путь к папке на сервере
-        autoindex on;  # Включаем отображение списка файлов
-        autoindex_exact_size off;  # Показываем размер файлов в удобном формате
-        autoindex_localtime on;  # Показываем время файлов по локальному времени
-        charset utf-8;  # Устанавливаем кодировку UTF-8
+        autoindex off;  # Отключаем отображение списка файлов
+
+    # Проверяем, существует ли файл
+    if (-f $request_filename) {
         # Если файл существует, отдаем его с оригинальным именем
-        if (-f $request_filename) {
-            add_header Content-Disposition "attachment; filename=$arg_filename";
-        }
+        add_header Content-Disposition "attachment; filename=$arg_filename";
+    }
+
+    # Если файл не существует, возвращаем 404
+    if (!-f $request_filename) {
+        return 404;
+    }
 }
 ```
 
