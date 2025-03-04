@@ -53,7 +53,7 @@ async def cmd_start(message: types.Message):
         if message.from_user.id not in ALLOWED_USERS:
             ALLOWED_USERS.append(message.from_user.id)
     if message.from_user.id not in ALLOWED_USERS:
-        await message.answer("❌ Кто вы? Я вас не знаю! Доступ только по приглашению админисратора")
+        await message.answer("❌ Кто вы? Я вас не знаю! Доступ только по приглашению администратора")
         return
     await message.answer("Привет! Нажмите кнопки для выбора действия:", reply_markup=main_keyboard)
 
