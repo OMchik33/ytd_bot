@@ -34,10 +34,14 @@ os.makedirs(COOKIES_PATH, exist_ok=True)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Глобальный словарь для хранения режимов скачивания
+user_modes = {}
+
 # Create keyboard
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📥 Download Video")],
+        [KeyboardButton(text="Скачать видео")],
+        [KeyboardButton(text="Скачать Youtube")],
         [KeyboardButton(text="🔑 Upload Cookies")]
     ],
     resize_keyboard=True,
@@ -49,7 +53,6 @@ main_keyboard = ReplyKeyboardMarkup(
 async def cmd_start(message: types.Message):
     args = message.text.split()[1] if len(message.text.split()) > 1 else ""
     if args == SPECIAL_CODE:
-        # Временно добавляем пользователя в ALLOWED_USERS, если его там нет
         if message.from_user.id not in ALLOWED_USERS:
             ALLOWED_USERS.append(message.from_user.id)
     if message.from_user.id not in ALLOWED_USERS:
@@ -75,10 +78,9 @@ async def handle_cookie_file(message: types.Message):
 async def download_media(message: types.Message, url: str, quality: str = None):
     status_message = await message.answer("🔄 Скачиваю...")
     try:
-        # yt-dlp options
         ydl_opts = {
             'format': f'{quality}+bestaudio/best' if quality else 'bestvideo+bestaudio/best',
-            'outtmpl': os.path.join(DOWNLOAD_PATH, '%(id)s.%(ext)s'),  # Используем ID видео как временное имя
+            'outtmpl': os.path.join(DOWNLOAD_PATH, '%(id)s.%(ext)s'),
             'quiet': False,
             'nocheckcertificate': True,
             'geo_bypass': True,
@@ -93,25 +95,20 @@ async def download_media(message: types.Message, url: str, quality: str = None):
             info = ydl.extract_info(url, download=True)
 
         title = info.get('title', 'video')
-        # Генерация хэша для названия файла
         slug = hashlib.md5(title.encode('utf-8')).hexdigest()
-        # Добавляем временную метку для уникальности имени файла
         timestamp = int(time.time())
         file_name = f"{slug}_{timestamp}.{info['ext']}"
         file_path = os.path.join(DOWNLOAD_PATH, file_name)
 
-        # Переименовываем файл
         temp_file_path = os.path.join(DOWNLOAD_PATH, f"{info['id']}.{info['ext']}")
         os.rename(temp_file_path, file_path)
-        # Sanitize filename (удаление смайликов и спецсимволов)
+        
         def sanitize_filename(title):
-            # Разрешаем буквы (латинские и русские), цифры, точку, запятую, восклицательный знак, дефис, нижнее подчеркивание и пробел
             sanitized = re.sub(r'[^a-zA-Zа-яА-Я0-9\.,!\- _]', '', title)
-            # Удаляем лишние пробелы по краям названия
             sanitized = re.sub(r'\s+', ' ', sanitized).strip()
             return sanitized
-        original_name = f"{sanitize_filename(title)}.{info['ext']}"  # Оригинальное имя файла
-        # Генерация ссылки на скачивание
+            
+        original_name = f"{sanitize_filename(title)}.{info['ext']}"
         download_url = f"{DOWNLOAD_BASE_URL}/{quote(file_name)}?filename={quote(original_name)}"
 
         await status_message.edit_text(f"✅ ГОТОВО!\n\n*Название ролика:* `{title}`\n\nНа скачивание 1 час\n\n[Ссылка для скачивания]({download_url})", parse_mode="Markdown")
@@ -120,55 +117,61 @@ async def download_media(message: types.Message, url: str, quality: str = None):
         logger.error(f"Error: {e}")
         await status_message.edit_text(f"❌ Наводчик контужен: {e}")
 
-# Отправляем сообщение при нажатии кнопки скачать видео
-@dp.message(lambda message: message.text == "📥 Download Video")
+# Обработчики кнопок
+@dp.message(lambda message: message.text == "Скачать видео")
+async def handle_best_download(message: types.Message):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+    user_modes[message.from_user.id] = 'best'
+    await message.answer("Отправьте ссылку на видео для скачивания в лучшем качестве. Можно скачивать видео с различных видеосервисов. Для некоторых использование куки файла обязательно.")
+
+@dp.message(lambda message: message.text == "Скачать Youtube")
 async def request_video_url(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await message.answer("Отправьте ссылку на видео.")
+    user_modes[message.from_user.id] = 'choose'
+    await message.answer("Отправьте ссылку на видео Youtube. Доступен выбор качества для скачивания.")
 
 # Проверяем сообщение на наличие URL
 @dp.message(lambda message: re.match(r'https?://', message.text))
 async def handle_url(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    # Получаем информацию о доступных форматах
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-        'cookiefile': os.path.join(COOKIES_PATH, f"cookies_{message.from_user.id}.txt") if os.path.exists(os.path.join(COOKIES_PATH, f"cookies_{message.from_user.id}.txt")) else None,
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(message.text, download=False)
-        formats = info.get('formats', [])
     
-    # Создаем inline кнопки с доступными качествами
-    buttons = []
-    unique_qualities = set()
-    for f in formats:
-        if f.get('height') and f['height'] >= 480:  # Фильтруем качество ниже 480p
-            quality = f"{f['height']}p"
-            if quality not in unique_qualities:
-                unique_qualities.add(quality)
-                # Добавляем ссылку на видео в callback_data
-                callback_data = json.dumps({"url": message.text, "quality": f['format_id']})
-                buttons.append(InlineKeyboardButton(text=quality, callback_data=callback_data))
+    current_mode = user_modes.pop(message.from_user.id, 'choose')
     
-    # Сортируем кнопки по качеству (от большего к меньшему)
-    buttons.sort(key=lambda x: int(x.text[:-1]), reverse=True)
-    
-    # Разбиваем кнопки на строки по 2 кнопки в каждой
-    keyboard = []
-    for i in range(0, len(buttons), 2):
-        row = buttons[i:i + 2]
-        # Если в строке одна кнопка, делаем её на всю ширину
-        if len(row) == 1:
-            row[0].text = f"🎬 {row[0].text}"  # Добавляем эмодзи для визуального выделения
-        keyboard.append(row)
-    
-    # Отправляем сообщение с кнопками
-    await message.answer("Выберите качество видео:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    if current_mode == 'best':
+        await download_media(message, message.text)
+    else:
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'cookiefile': os.path.join(COOKIES_PATH, f"cookies_{message.from_user.id}.txt") if os.path.exists(os.path.join(COOKIES_PATH, f"cookies_{message.from_user.id}.txt")) else None,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(message.text, download=False)
+            formats = info.get('formats', [])
+        
+        buttons = []
+        unique_qualities = set()
+        for f in formats:
+            if f.get('height') and f['height'] >= 480:
+                quality = f"{f['height']}p"
+                if quality not in unique_qualities:
+                    unique_qualities.add(quality)
+                    callback_data = json.dumps({"url": message.text, "quality": f['format_id']})
+                    buttons.append(InlineKeyboardButton(text=quality, callback_data=callback_data))
+        
+        buttons.sort(key=lambda x: int(x.text[:-1]), reverse=True)
+        keyboard = []
+        for i in range(0, len(buttons), 2):
+            row = buttons[i:i + 2]
+            if len(row) == 1:
+                row[0].text = f"🎬 {row[0].text}"
+            keyboard.append(row)
+        
+        await message.answer("Выберите качество видео:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 # Обработка выбора качества
 @dp.callback_query()
@@ -182,7 +185,6 @@ async def handle_callback_query(query: types.CallbackQuery):
             await query.answer("❌ Ошибка: не найдена ссылка на видео.")
             return
 
-        # Скачиваем видео с выбранным качеством
         await download_media(query.message, url, quality)
         await query.answer()
     except Exception as e:
