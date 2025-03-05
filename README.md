@@ -59,11 +59,6 @@
         # Если файл существует, отдаем его с оригинальным именем
         add_header Content-Disposition "attachment; filename=$arg_filename";
     }
-
-    # Если файл не существует, возвращаем 404
-    if (!-f $request_filename) {
-        return 404;
-    }
 }
 ```
 
