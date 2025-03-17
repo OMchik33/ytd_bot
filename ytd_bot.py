@@ -40,14 +40,12 @@ user_modes = {}
 # Create keyboard
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="Скачать видео")],
-        [KeyboardButton(text="Скачать Youtube")],
-        [KeyboardButton(text="🔑 Upload Cookies")]
+        [KeyboardButton(text="Инструкция"), KeyboardButton(text="Cookies")],
+        [KeyboardButton(text="Видео"), KeyboardButton(text="YouTube")]
     ],
     resize_keyboard=True,
     persistent=True
 )
-
 # Запуск бота
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -111,21 +109,50 @@ async def download_media(message: types.Message, url: str, quality: str = None):
         original_name = f"{sanitize_filename(title)}.{info['ext']}"
         download_url = f"{DOWNLOAD_BASE_URL}/{quote(file_name)}?filename={quote(original_name)}"
 
-        await status_message.edit_text(f"✅ ГОТОВО!\n\n*Название ролика:* `{title}`\n\nНа скачивание 1 час\n\n[Ссылка для скачивания]({download_url})", parse_mode="Markdown")
+        await status_message.edit_text(f"✅ ГОТОВО!\n\n*Название ролика:* `{title}`\n\nНа скачивание 30 минут\n\n[Ссылка для скачивания]({download_url})", parse_mode="Markdown")
 
     except Exception as e:
         logger.error(f"Error: {e}")
         await status_message.edit_text(f"❌ Наводчик контужен: {e}")
 
-# Обработчики кнопок
-@dp.message(lambda message: message.text == "Скачать видео")
+# Обработчик кнопки Инструкция
+@dp.message(lambda message: message.text == "Инструкция")
+async def instruction(message: types.Message):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+    instruction_text = """
+    Инструкция для использования бота:
+    *Видео* - скачать видео с любого сервиса в наилучшем качестве.
+    *YouTube* - Скачать с Ютуба с выбором качества скачивания.
+    *Cookies* - если видео не качается (ошибка), тогда:
+    1. Установите [плагин](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) в браузер.
+    2. Зайдите в свою учетную запись на сайте видеосервиса.
+    3. Активируйте установленный плагин и сохраните с этой страницы куки файл в формате Netscape.
+    4. В данном боте нажмите кнопку Cookies и отправьте в бот текстовый куки файл из пункта 3.
+    5. Скачивайте видео любой из видеокнопок. Для другого видеосервиса повторить пункты 2-3-4-5.
+    """
+    await message.answer(instruction_text, parse_mode="Markdown", disable_web_page_preview=True)
+
+# Обработчик кнопки Cookies
+@dp.message(lambda message: message.text == "Cookies")
+async def cookies(message: types.Message):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+    cookies_text = """
+    Отправьте мне сохраненный куки файл в формате Netscape. 
+    """
+    await message.answer(cookies_text, parse_mode="Markdown", disable_web_page_preview=True)
+
+# Обработчики кнопки Видео
+@dp.message(lambda message: message.text == "Видео")
 async def handle_best_download(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
     user_modes[message.from_user.id] = 'best'
-    await message.answer("Отправьте ссылку на видео для скачивания в лучшем качестве. Можно скачивать видео с различных видеосервисов. Для некоторых использование куки файла обязательно.")
+    await message.answer("Отправьте ссылку на видео для скачивания в лучшем качестве. Можно скачивать шортсы или видео с различных видеосервисов.")
 
-@dp.message(lambda message: message.text == "Скачать Youtube")
+# Обработчики кнопки YouTube
+@dp.message(lambda message: message.text == "YouTube")
 async def request_video_url(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
