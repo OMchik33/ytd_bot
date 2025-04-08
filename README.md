@@ -109,6 +109,15 @@ WantedBy=multi-user.target
 - Включаем автозагрузку: `systemctl enable ytd_bot.service`
 - Запускаем бот: `systemctl start ytd_bot.service`
 
+## Важно:
+Если бот вообще перестал скачивать видео, активируйте виртуальную среду и обновите yt-dlp
+
+```
+source mybotenv/bin/activate
+pip install --upgrade yt-dlp
+deactivate
+```
+
 # FAQ
 1. Для работы бота требуется установить [плагин](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc "плагин") в ваш браузер. (п.с.: без куки тоже может скачивать, если видеосервис позволит)
 2. Переходим на сайт, откуда будем скачивать видео, и с помощью плагина сохраняем куки файл в формате Netscape. Крайне желательно иметь учетную запись на этом сайте и быть в ней авторизованным. Далее запускаем бот. Загружаем куки файл в бот. Скачиваем видео...
