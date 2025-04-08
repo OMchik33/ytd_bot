@@ -85,7 +85,7 @@ async def download_media(message: types.Message, url: str, quality: str = None):
             'retries': 5,
             'cookiefile': os.path.join(COOKIES_PATH, f"cookies_{message.from_user.id}.txt") if os.path.exists(os.path.join(COOKIES_PATH, f"cookies_{message.from_user.id}.txt")) else None,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'  # Обновите до актуальной версии Chrome
             }
         }
 
