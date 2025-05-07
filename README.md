@@ -139,6 +139,7 @@ deactivate
 | Python | 3.12.3 |
 | aiogram  | 3.20.0 |
 |  yt-dlp  | 2025.03.31 |
+|  ffmpeg  | 6.1.1 |
 
 # ОТВЕТСТВЕННОСТЬ
 
