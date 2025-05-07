@@ -87,6 +87,13 @@
 Проверяем: `crontab -l`
 Применяем изменения в планировщике: `systemctl restart cron`
 
+5. **Устанавливаем ffmpeg*
+
+```
+apt install ffmpeg -y
+```
+
+
 6. **Создаем сервис, добавляем в автозагрузку, запускаем бота.**
 
 - Вводим в консоли: `nano /etc/systemd/system/ytd_bot.service`
