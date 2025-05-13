@@ -27,7 +27,7 @@ ALLOWED_USERS = [ВАШ_ТГ_ID] # Добавьте ID разрешенных п
 SPECIAL_CODE = "secretcode12345" # Секретный код для доступа к боту по ссылке
 DOWNLOAD_PATH = Path("/download") # Используем Path для удобства
 COOKIES_PATH = Path("/root/ytd/cookies") # Используем Path
-DOWNLOAD_BASE_URL = "https://ВАШДОМЕН.ru/1234567yourrandom" # URL для доступа к скачанным файлам
+DOWNLOAD_BASE_URL = "https://ВАШДОМЕН.ru/files" # URL для доступа к скачанным файлам
 
 # --- Включение логирования ---
 logging.basicConfig(
