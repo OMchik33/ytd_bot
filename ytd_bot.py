@@ -1,4 +1,3 @@
-# [source: 1]
 import os
 import asyncio
 import logging
@@ -8,7 +7,10 @@ import json
 import hashlib
 from urllib.parse import quote
 from pathlib import Path
-import datetime # для очистки старых запросов
+import datetime
+# --- Загрузка переменных из .env файла ---
+from dotenv import load_dotenv
+load_dotenv() # Загружает переменные из .env файла в переменные окружения
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -22,12 +24,20 @@ from aiogram.exceptions import TelegramBadRequest # Импортируем ош�
 import yt_dlp
 
 # --- Конфигурация ---
-BOT_TOKEN = "ВСТАВЬТЕСЮДАТОКЕНБОТА" # Вставьте ваш токен
-ALLOWED_USERS = [ВАШ_ТГ_ID] # Добавьте ID разрешенных пользователей
-SPECIAL_CODE = "secretcode12345" # Секретный код для доступа к боту по ссылке
-DOWNLOAD_PATH = Path("/download") # Используем Path для удобства
-COOKIES_PATH = Path("/root/ytd/cookies") # Используем Path
-DOWNLOAD_BASE_URL = "https://ВАШДОМЕН.ru/files" # URL для доступа к скачанным файлам
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Обработка ALLOWED_USERS: из строки "id1,id2" в список [id1, id2]
+allowed_users_str = os.getenv("ALLOWED_USERS", "") # Значение по умолчанию - пустая строка
+ALLOWED_USERS = [int(user_id.strip()) for user_id in allowed_users_str.split(',') if user_id.strip().isdigit()]
+
+SPECIAL_CODE = os.getenv("SPECIAL_CODE")
+DOWNLOAD_PATH = Path(os.getenv("DOWNLOAD_PATH", "/download")) # Значение по умолчанию, если не найдено
+COOKIES_PATH = Path(os.getenv("COOKIES_PATH", "/root/ytd/cookies")) # Пример другого значения по умолчанию
+DOWNLOAD_BASE_URL = os.getenv("DOWNLOAD_BASE_URL")
+
+# Проверка, что BOT_TOKEN загружен
+if not BOT_TOKEN:
+    logger.critical("Ошибка: BOT_TOKEN не найден! Убедитесь, что он задан в .env файле.")
+    exit() # Или raise Exception("BOT_TOKEN not found")
 
 # --- Включение логирования ---
 logging.basicConfig(
@@ -46,14 +56,14 @@ dp = Dispatcher()
 
 # --- Хранилище для URL ---
 # Ключ: message_id сообщения с кнопками
-# Значение: {'url': str, 'timestamp': datetime}
+# Значение: {'url': str, 'timestamp': datetime, 'title': str, 'thumbnail_url': str | None }
 active_url_requests = {}
 REQUEST_TTL = datetime.timedelta(hours=1) # Время жизни запроса (1 час)
 
 # --- Клавиатура ---
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        # [source: 2]
+        # 
         [KeyboardButton(text="ℹ️ Инструкция"), KeyboardButton(text="🍪 Cookies")],
         [KeyboardButton(text="⬇️ Скачать видео")] # Объединенная кнопка
     ],
@@ -61,16 +71,16 @@ main_keyboard = ReplyKeyboardMarkup(
     persistent=True
 )
 
-# --- Хелперы (get_cookie_file, get_ydl_opts, sanitize_filename) ---
+# --- Хелперы ---
 def get_cookie_file(user_id: int) -> Path | None:
     """Возвращает путь к файлу куки пользователя, если он существует."""
     cookie_file = COOKIES_PATH / f"cookies_{user_id}.txt"
     return cookie_file if cookie_file.exists() else None
 
-def get_ydl_opts(user_id: int, format_selection: str = None) -> dict:
+def get_ydl_opts(user_id: int, format_selection: str = None, download_type: str = 'video') -> dict:
     """Возвращает словарь опций для yt-dlp."""
     opts = {
-        # [source: 5]
+        # 
         'outtmpl': str(DOWNLOAD_PATH / '%(id)s.%(ext)s'), # Путь для временного файла
         'quiet': False,
         'nocheckcertificate': True,
@@ -78,22 +88,33 @@ def get_ydl_opts(user_id: int, format_selection: str = None) -> dict:
         'retries': 5,
         'cookiefile': str(cookie_file) if (cookie_file := get_cookie_file(user_id)) else None,
         'http_headers': {
-            # [source: 6]
+            # 
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
         },
         'concurrent_fragment_downloads': 5,
         'fragment_retries': 10,
-        'merge_output_format': 'mp4', # Явно указываем MP4 как формат для слияния
     }
-    if format_selection:
-        opts['format'] = f'{format_selection}+ba/b'
-    else:
-        opts['format'] = 'bestvideo[ext=mp4]+bestaudio/best'
+    if download_type == 'audio':
+        opts['format'] = 'bestaudio/best'
+        opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192', # Качество MP3
+        }]
+        opts['merge_output_format'] = None # Не нужно для извлечения аудио
+        # yt-dlp сам изменит расширение на mp3 после postprocessing
+        # outtmpl остается '%(id)s.%(ext)s', yt-dlp обработает это.
+    elif download_type == 'video':
+        opts['merge_output_format'] = 'mp4' # Явно указываем MP4 как формат для слияния
+        if format_selection:
+            opts['format'] = f'{format_selection}+ba/b' # ba - bestaudio, b - best
+        else:
+            opts['format'] = 'bestvideo[ext=mp4]+bestaudio/best' # Предпочитаем mp4 контейнер
     return opts
 
 def sanitize_filename(title: str) -> str:
     """Очищает имя файла от недопустимых символов."""
-    # [source: 8]
+    # 
     sanitized = re.sub(r'[<>:"/\\|?*]', '', title)
     sanitized = re.sub(r'\s+', ' ', sanitized).strip()
     max_len = 150
@@ -117,7 +138,7 @@ async def cmd_start(message: types.Message):
         else:
             await message.answer("Вы уже в списке допущенных пользователей.")
 
-    if user_id not in ALLOWED_USERS: # [source: 3]
+    if user_id not in ALLOWED_USERS: # 
         await message.answer("❌ Кто вы? Я вас не знаю! Доступ только по приглашению.")
         return
 
@@ -127,14 +148,15 @@ async def cmd_start(message: types.Message):
 @dp.message(F.text == "ℹ️ Инструкция")
 async def instruction(message: types.Message):
     """Показывает инструкцию"""
-    if message.from_user.id not in ALLOWED_USERS: return # [source: 9]
+    if message.from_user.id not in ALLOWED_USERS: return # 
     instruction_text = """
     *Инструкция для использования бота:*
 
     *⬇️ Скачать видео* - Нажмите эту кнопку, затем отправьте боту ссылку на видео.
-      - Если доступно несколько вариантов качества (480p+), бот предложит выбрать.
-      - Иначе скачает в наилучшем качестве (предпочтительно MP4).
+      - Бот предложит выбрать качество видео (если доступно несколько вариантов >= 480p).
+      - Будет кнопка "🎵 Скачать MP3" для извлечения аудиодорожки.
       - Будет кнопка "🖼️ Обложка" для скачивания превью.
+      - Если подходящих видеоформатов нет, бот скачает видео в наилучшем доступном качестве.
 
     *🍪 Cookies* - Используйте, если видео требует авторизации.
     1. Установите [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc).
@@ -142,14 +164,14 @@ async def instruction(message: types.Message):
     3. Нажмите иконку расширения -> Export (формат **Netscape**).
     4. Нажмите "🍪 Cookies" в боте -> отправьте `.txt` файл.
     5. Попробуйте скачать видео снова.
-    """ # [source: 10] [source: 11] [source: 12] [source: 13]
+    """ # 
     await message.answer(instruction_text, parse_mode="Markdown", disable_web_page_preview=True)
 
 @dp.message(F.text == "🍪 Cookies")
 async def cookies_prompt(message: types.Message):
     """Запрашивает файл куки"""
     if message.from_user.id not in ALLOWED_USERS: return
-    cookies_text = "Отправьте мне файл `cookies.txt`, экспортированный из расширения (в формате Netscape)." # [source: 14]
+    cookies_text = "Отправьте мне файл `cookies.txt`, экспортированный из расширения (в формате Netscape)." # 
     await message.answer(cookies_text, parse_mode="Markdown")
 
 @dp.message(F.text == "⬇️ Скачать видео")
@@ -173,84 +195,104 @@ async def handle_cookie_file(message: types.Message):
     try:
         await bot.download_file(file_path_tg, destination=str(destination))
         logger.info(f"Cookies file saved for user {message.from_user.id}")
-        # [source: 4]
+        # 
         await message.answer("✅ Куки-файл успешно загружен и сохранен!")
     except Exception as e:
         logger.error(f"Ошибка при сохранении куки файла для {message.from_user.id}: {e}")
         await message.answer("❌ Не удалось сохранить куки-файл.")
 
 # --- Основная логика скачивания ---
-async def download_media(message: types.Message, url: str, user_id: int, format_id: str = None):
+async def download_media(message: types.Message, url: str, user_id: int,
+                         original_title: str, # Добавляем original_title
+                         format_id: str = None, download_type: str = 'video'):
     """Скачивает медиафайл по URL с заданными опциями."""
-    status_msg = await message.answer("⏳ Получение информации о видео...") # Отправляем новое сообщение о статусе
-    ydl_opts = get_ydl_opts(user_id, format_selection=format_id)
-    download_success = False # Флаг успешного скачивания
-    info = None # Для хранения информации о видео
+    status_msg_text = "⏳ Получение информации о медиа..."
+    if download_type == 'audio':
+        status_msg_text = "⏳ Получение информации об аудио..."
+    elif download_type == 'video':
+        status_msg_text = "⏳ Получение информации о видео..."
+
+    status_msg = await message.answer(status_msg_text) # Отправляем новое сообщение о статусе
+    ydl_opts = get_ydl_opts(user_id, format_selection=format_id, download_type=download_type)
+    download_success = False
+    info_after_download = None # Для хранения информации о видео/аудио после скачивания
 
     try:
-        # Этап 1: Извлечение информации (если нужно) и скачивание
-        await status_msg.edit_text("🔄 Скачиваю видео... Это может занять некоторое время.")
+        download_action_text = "🔄 Скачиваю видео... Это может занять некоторое время."
+        if download_type == 'audio':
+            download_action_text = "🔄 Скачиваю аудио (MP3)... Это может занять некоторое время."
+        await status_msg.edit_text(download_action_text)
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
-                # Извлекаем инфо перед скачиванием чтобы знать id и ext
-                info = ydl.extract_info(url, download=False)
-                file_id = info.get('id', 'unknown_id')
-                file_ext = info.get('ext', 'mp4')
-                # Обновляем шаблон имени файла с правильным расширением
-                # Важно: yt-dlp может изменить расширение при конвертации/скачивании другого формата
-                ydl.params['outtmpl']['default'] = str(DOWNLOAD_PATH / f'{file_id}.%(ext)s')
+                # Сначала извлекаем инфо, чтобы знать id для формирования имени файла до скачивания.
+                # Это важно, так как outtmpl использует %(id)s.
+                pre_info = ydl.extract_info(url, download=False)
+                file_id_for_tmpl = pre_info.get('id', 'unknown_id')
 
-                # Теперь скачиваем
-                ydl.download([url])
-                download_success = True # Отмечаем успешное скачивание
+                # Обновляем шаблон имени файла с правильным ID до фактического скачивания
+                # yt-dlp использует 'default' ключ в словаре outtmpl, если outtmpl - словарь.
+                # Если outtmpl - строка, как у нас, это изменение не требуется таким образом,
+                # но полезно иметь file_id_for_tmpl для поиска файла.
+                # ydl.params['outtmpl'] = str(DOWNLOAD_PATH / f'{file_id_for_tmpl}.%(ext)s') # Уже установлено в get_ydl_opts
 
-                # После успешного скачивания, нужно снова получить инфо, т.к. ydl.download может изменить info
-                # Или найти скачанный файл по ID
-                original_id = info.get('id', 'unknown_id')
+                # Теперь скачиваем и одновременно получаем инфо о скачанном файле
+                info_after_download = ydl.extract_info(url, download=True)
+                download_success = True
+
+                # Ищем скачанный файл
+                # yt-dlp мог изменить расширение, особенно для аудио (на mp3)
+                # или если запрошенный формат не был доступен и был выбран другой.
+                original_id = info_after_download.get('id', file_id_for_tmpl) # Используем ID из info_after_download если есть
                 temp_file_path = None
-                # Ищем файл с ID и любым расширением
-                found_files = list(DOWNLOAD_PATH.glob(f"{original_id}.*"))
-                if found_files:
-                    temp_file_path = found_files[0]
-                    original_ext = temp_file_path.suffix[1:] # Получаем реальное расширение скачанного файла
-                    logger.info(f"Найден скачанный файл: {temp_file_path}")
-                else:
-                    # Если не нашли - пытаемся использовать исходное расширение (менее надежно)
-                    original_ext = info.get('ext', 'mp4')
-                    temp_file_path = DOWNLOAD_PATH / f"{original_id}.{original_ext}"
-                    logger.warning(f"Скачанный файл не найден по ID '{original_id}', пробуем исходное расширение: {temp_file_path}")
+                downloaded_filepath_from_info = info_after_download.get('requested_downloads', [{}])[0].get('filepath')
 
+                if downloaded_filepath_from_info and Path(downloaded_filepath_from_info).exists():
+                    temp_file_path = Path(downloaded_filepath_from_info)
+                    logger.info(f"Найден скачанный файл напрямую из info: {temp_file_path}")
+                else: # Запасной вариант: ищем по ID
+                    logger.warning(f"Скачанный файл не найден по 'filepath' в info. Ищем по ID: {original_id}")
+                    found_files = list(DOWNLOAD_PATH.glob(f"{original_id}.*"))
+                    if found_files:
+                        temp_file_path = found_files[0] # Берем первый найденный, предполагая, что он нужный
+                        logger.info(f"Найден скачанный файл по ID: {temp_file_path}")
+                    else:
+                        logger.error(f"Файл не найден после скачивания: ID={original_id}")
+                        await status_msg.edit_text(f"❌ Ошибка: Не найден скачанный файл после завершения процесса.")
+                        return
 
                 if not temp_file_path or not temp_file_path.exists():
                     logger.error(f"Файл не найден после скачивания: ID={original_id}")
                     await status_msg.edit_text(f"❌ Ошибка: Не найден скачанный файл после завершения процесса.")
                     return
 
+                # Получаем реальное расширение скачанного файла
+                actual_ext = temp_file_path.suffix[1:]
+
             except yt_dlp.utils.DownloadError as e:
                 error_message = f"❌ Ошибка скачивания:\n`{e}`"
                 if "confirm your age" in str(e).lower():
-                    error_message += "\n\nℹ️ Возможно, видео имеет возрастное ограничение. Попробуйте загрузить Cookies."
-                elif "private video" in str(e).lower():
-                    error_message += "\n\nℹ️ Это приватное видео. Убедитесь, что у вас есть доступ и загружены Cookies."
+                    error_message += "\n\nℹ️ Возможно, медиа имеет возрастное ограничение. Попробуйте загрузить Cookies."
+                elif "private video" in str(e).lower() or "private playlist" in str(e).lower():
+                    error_message += "\n\nℹ️ Это приватное медиа. Убедитесь, что у вас есть доступ и загружены Cookies."
                 elif "premiere" in str(e).lower():
                     error_message = "❌ Ошибка: Видео является премьерой и еще не доступно для скачивания."
                 elif "unavailable" in str(e).lower():
-                    error_message = f"❌ Ошибка: Видео недоступно ({e})."
+                    error_message = f"❌ Ошибка: Медиа недоступно ({e})."
                 await status_msg.edit_text(error_message, parse_mode="Markdown")
-                return # Прекращаем выполнение
+                return
             except Exception as e:
                 logger.error(f"Неожиданная ошибка yt-dlp на этапе скачивания для {url}: {e}")
-                raise # Перевыбрасываем
+                raise
 
         # Этап 2: Переименование и формирование ссылки (только если скачивание успешно)
         if download_success and temp_file_path and temp_file_path.exists():
-            title = info.get('title', 'video') if info else 'video'
-            # Создание уникального имени файла для хранения
-            slug = hashlib.md5(title.encode('utf-8') + str(user_id).encode()).hexdigest()[:10]
+            # Используем original_title, переданный из handle_url, т.к. info_after_download может быть неполным
+            title_for_filename = original_title
+            slug = hashlib.md5(title_for_filename.encode('utf-8') + str(user_id).encode()).hexdigest()[:10]
             timestamp = int(time.time())
-            # [source: 7]
-            unique_filename = f"{slug}_{timestamp}.{original_ext}"
+            # 
+            unique_filename = f"{slug}_{timestamp}.{actual_ext}"
             final_file_path = DOWNLOAD_PATH / unique_filename
 
             try:
@@ -258,23 +300,23 @@ async def download_media(message: types.Message, url: str, user_id: int, format_
                 logger.info(f"Файл переименован в {final_file_path}")
             except OSError as e:
                 logger.error(f"Ошибка переименования файла {temp_file_path} в {final_file_path}: {e}")
-                await status_msg.edit_text(f"❌ Ошибка файловой системы при сохранении видео.")
+                await status_msg.edit_text(f"❌ Ошибка файловой системы при сохранении медиа.")
                 return
 
-            # Создание имени файла для пользователя
-            original_name_for_user = f"{sanitize_filename(title)}.{original_ext}"
-            # [source: 8]
+            original_name_for_user = f"{sanitize_filename(title_for_filename)}.{actual_ext}"
+            # 
             download_url = f"{DOWNLOAD_BASE_URL}/{quote(unique_filename)}?filename={quote(original_name_for_user)}"
+            media_type_emoji = "🎬" if download_type == 'video' else "🎵"
 
             await status_msg.edit_text(
                 f"✅ **Готово!**\n\n"
-                f"🎬 *{title}*\n\n"
+                f"{media_type_emoji} *{title_for_filename}*\n\n"
                 f"🔗 [Скачать файл]({download_url})\n\n"
                 f"_Ссылка действительна ограниченное время._",
                 parse_mode="Markdown",
                 disable_web_page_preview=True
             )
-        elif download_success and not temp_file_path:
+        elif download_success and not temp_file_path: # Должно быть обработано выше, но на всякий случай
             logger.error(f"Скачивание помечено успешным, но файл не найден для URL {url}")
             await status_msg.edit_text("❌ Внутренняя ошибка: скачанный файл не найден.")
 
@@ -283,7 +325,7 @@ async def download_media(message: types.Message, url: str, user_id: int, format_
         await status_msg.edit_text(f"❌ Ошибка: Не удалось извлечь информацию для этой ссылки.\n`{e}`")
     except yt_dlp.utils.DownloadError as e: # Ловим ошибки скачивания еще раз (могут быть на этапе getinfo)
         logger.error(f"Ошибка скачивания yt-dlp (этап info) для {url}: {e}")
-        await status_msg.edit_text(f"❌ Ошибка при получении информации о видео:\n`{e}`")
+        await status_msg.edit_text(f"❌ Ошибка при получении информации о медиа:\n`{e}`")
     except Exception as e:
         logger.exception(f"Критическая ошибка при обработке {url} для пользователя {user_id}: {e}")
         await status_msg.edit_text(f"❌ Произошла непредвиденная ошибка:\n`{e}`")
@@ -296,13 +338,11 @@ async def handle_url(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS: return
     if not message.text: return
 
-    url = message.text
+    url = message.text.strip()
     user_id = message.from_user.id
-    # Используем answer, чтобы получить message_id для хранения URL
     status_msg = await message.answer("🔎 Анализирую ссылку...")
-    message_id_for_buttons = status_msg.message_id # ID сообщения, где будут кнопки
+    message_id_for_buttons = status_msg.message_id
 
-    # --- Очистка старых запросов ---
     now = datetime.datetime.now(datetime.timezone.utc)
     expired_keys = [
         k for k, v in active_url_requests.items()
@@ -310,14 +350,13 @@ async def handle_url(message: types.Message):
     ]
     for key in expired_keys:
         active_url_requests.pop(key, None)
-    # --- ---
+        logger.info(f"Удален устаревший запрос: {key}")
 
     try:
-        # Извлекаем только информацию
-        ydl_opts_info = get_ydl_opts(user_id)
+        ydl_opts_info = get_ydl_opts(user_id) # Получаем базовые опции, включая cookies
         ydl_opts_info['skip_download'] = True
         ydl_opts_info['quiet'] = True
-        # [source: 16]
+        # 
         ydl_opts_info['no_warnings'] = True
 
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
@@ -325,122 +364,133 @@ async def handle_url(message: types.Message):
 
         formats = info.get('formats', [])
         thumbnail_url = info.get('thumbnail')
-        title = info.get('title', 'видео')
+        title = info.get('title', 'медиафайл') # Более общее название
 
-        # --- Логика выбора качества ---
-        quality_buttons = []
+        # Сохраняем URL и доп. инфо ПЕРЕД отправкой кнопок
+        active_url_requests[message_id_for_buttons] = {
+            'url': url,
+            'timestamp': datetime.datetime.now(datetime.timezone.utc),
+            'title': title, # Сохраняем оригинальный заголовок
+            'thumbnail_url': thumbnail_url
+        }
+
+        quality_buttons_data = []
         unique_qualities = {}
 
-        # [source: 17]
+        # 
         for f in formats:
             height = f.get('height')
             format_id = f.get('format_id')
             vcodec = f.get('vcodec', 'none')
-            acodec = f.get('acodec', 'none')
+            acodec = f.get('acodec', 'none') # Проверяем и аудиокодек
 
+            # Ищем форматы с видео и аудио дорожками (или только видео, если аудио будет сливаться)
             if height and height >= 480 and vcodec != 'none' and format_id:
-                if acodec != 'none' or f.get('protocol') in ('https', 'http'):
-                    quality_label = f"{height}p"
-                    if quality_label not in unique_qualities:
-                        # [source: 18]
-                        unique_qualities[quality_label] = {
-                            "format_id": format_id,
-                            "height": height
-                        }
+                # Предпочитаем форматы, которые уже содержат аудио, или DASH видео (http/https)
+                # yt-dlp по умолчанию пытается выбрать формат с видео и аудио.
+                # Если формат только видео (vcodec != 'none' and acodec == 'none'),
+                # yt-dlp автоматически попытается найти и смержить с лучшим аудио.
+                # Нам важно, чтобы был видеопоток.
+                 quality_label = f"{height}p"
+                 if quality_label not in unique_qualities:
+                    # 
+                    unique_qualities[quality_label] = {
+                        "format_id": format_id,
+                        "height": height
+                    }
 
         sorted_qualities = sorted(unique_qualities.items(), key=lambda item: item[1]['height'], reverse=True)
 
-        # --- Формирование клавиатуры ---
         builder = InlineKeyboardBuilder()
-        # [source: 19]
+        # 
         for label, data in sorted_qualities:
-            # УКОРОЧЕННЫЕ ДАННЫЕ!
             callback_data = json.dumps({
-                "a": "d", # action: download
-                "f": data['format_id'] # format_id
+                "a": "dv", # action: download_video
+                "f": data['format_id']
             })
-            # Проверка длины callback_data (Telegram лимит ~64 байта)
             if len(callback_data.encode('utf-8')) <= 64:
                 builder.button(text=f"🎬 {label}", callback_data=callback_data)
             else:
-                logger.warning(f"Callback data для {label} ({data['format_id']}) слишком длинное: {len(callback_data.encode('utf-8'))} байт. Кнопка пропущена.")
+                logger.warning(f"Callback data для видео {label} ({data['format_id']}) слишком длинное. Кнопка пропущена.")
+
+        # --- Новая кнопка MP3 ---
+        callback_data_mp3 = json.dumps({"a": "da"}) # action: download_audio
+        if len(callback_data_mp3.encode('utf-8')) <= 64:
+             builder.button(text="🎵 Скачать MP3", callback_data=callback_data_mp3)
+        else:
+            logger.warning(f"Callback data для MP3 слишком длинное. Кнопка пропущена.")
 
 
-        # Добавляем кнопку обложки
         if thumbnail_url:
-            # УКОРОЧЕННЫЕ ДАННЫЕ!
             callback_data_thumb = json.dumps({"a": "t"}) # action: thumbnail
             if len(callback_data_thumb.encode('utf-8')) <= 64:
                 builder.button(text="🖼️ Обложка", callback_data=callback_data_thumb)
-
-        # Компоновка
-        # Исправление: Преобразуем builder.buttons в список перед получением длины
-        quality_button_count = len(list(builder.buttons)) - (1 if thumbnail_url else 0) # Считаем только кнопки качества
-        if quality_button_count > 0 :
-            builder.adjust(2 if quality_button_count > 1 else 1) # По 2 в ряд, если их больше 1
+            else:
+                logger.warning(f"Callback data для обложки слишком длинное. Кнопка пропущена.")
 
 
-        # --- Отправка сообщения ---
+        # Компоновка кнопок: кнопки качества по 2 в ряд, затем MP3 и Обложка на отдельных рядах или вместе
+        video_quality_button_count = len(sorted_qualities)
+        if video_quality_button_count > 0:
+            # Первый ряд - кнопки качества
+            builder.adjust(*([2] * (video_quality_button_count // 2) + ([1] if video_quality_button_count % 2 else [])))
+        # Остальные кнопки (MP3, Обложка) будут добавлены в новый ряд по умолчанию или по одной, если adjust не указан для них
+
+
         keyboard_markup = builder.as_markup() if builder.buttons else None
 
-        # Сохраняем URL перед отправкой кнопок
-        active_url_requests[message_id_for_buttons] = {
-            'url': url,
-            'timestamp': datetime.datetime.now(datetime.timezone.utc)
-        }
+        if not keyboard_markup: # Если ни одной кнопки не создано (например, все callback_data слишком длинные)
+             await status_msg.edit_text(
+                f"Найдено медиа: *{title}*\n\n"
+                "Не удалось сформировать кнопки выбора. Скачиваю в наилучшем доступном качестве.",
+                parse_mode="Markdown"
+            )
+             active_url_requests.pop(message_id_for_buttons, None) # Очищаем state
+             await download_media(message, url, user_id, original_title=title) # Скачиваем best video по умолчанию
+             return
 
-        if quality_button_count > 1: # Предлагаем выбор
+
+        if video_quality_button_count > 0 :
             await status_msg.edit_text(
-                f"Найдено видео: *{title}*\n\nВыберите качество для скачивания:",
+                f"Найдено медиа: *{title}*\n\nВыберите действие:",
                 reply_markup=keyboard_markup,
                 parse_mode="Markdown"
             )
-        elif quality_button_count == 1: # Только один вариант
-            single_format_id = sorted_qualities[0][1]['format_id']
+        else: # Нет подходящих видео форматов >= 480p, но есть кнопка MP3 и/или обложка
             await status_msg.edit_text(
-                f"Найдено видео: *{title}*\n\nДоступно только одно качество >= 480p. Начинаю скачивание.",
-                reply_markup=keyboard_markup, # Оставляем кнопку обложки, если есть
+                f"Найдено медиа: *{title}*\n\nВидеоформаты >= 480p не найдены. Вы можете скачать MP3 или обложку (если доступно), или я скачаю видео в лучшем качестве по умолчанию.",
+                reply_markup=keyboard_markup, # Показываем кнопки MP3/Обложка
                 parse_mode="Markdown"
             )
-            # Тут не вызываем download_media, т.к. пользователь должен нажать кнопку (или обложку)
-            # Если бы хотели скачать автоматом, нужно было бы вызвать тут:
-            # active_url_requests.pop(message_id_for_buttons, None) # Очищаем перед авто-скачиванием
-            # await download_media(message, url, user_id, format_id=single_format_id)
-        else: # Нет подходящих форматов >= 480p
-            await status_msg.edit_text(
-                f"Найдено видео: *{title}*\n\nНе найдено форматов >= 480p. Скачиваю в наилучшем доступном качестве.",
-                reply_markup=keyboard_markup, # Оставляем кнопку обложки, если есть
-                parse_mode="Markdown"
-            )
-            # Скачиваем best по умолчанию, но сначала очищаем state
-            active_url_requests.pop(message_id_for_buttons, None)
-            await download_media(message, url, user_id) # Скачиваем best
+            # НЕ начинаем скачивание видео автоматически, даем пользователю выбрать MP3/Обложку.
+            # Если пользователь не выберет, а напишет что-то другое, state запроса умрет по TTL.
+            # Можно добавить кнопку "Скачать лучшее видео" если video_quality_button_count == 0
+            # Или если пользователь захочет, он может отправить ссылку заново для скачивания видео по умолчанию.
 
     except TelegramBadRequest as e:
-        # Ловим конкретно ошибку невалидных данных кнопки
         if "BUTTON_DATA_INVALID" in str(e):
-            logger.error(f"Ошибка BUTTON_DATA_INVALID при создании кнопок для URL: {url}. Данные: {builder.export()}")
-            await status_msg.edit_text("❌ Ошибка: Не удалось сформировать кнопки выбора качества (данные слишком длинные). Попробуйте другую ссылку.")
-            active_url_requests.pop(message_id_for_buttons, None) # Очищаем state
+            logger.error(f"Ошибка BUTTON_DATA_INVALID для URL: {url}. Данные: {builder.export() if 'builder' in locals() else 'N/A'}")
+            await status_msg.edit_text("❌ Ошибка: Не удалось сформировать кнопки (данные слишком длинные).")
         else:
             logger.exception(f"Ошибка Telegram API в handle_url для {url}: {e}")
             await status_msg.edit_text(f"❌ Ошибка Telegram API: {e}")
+        active_url_requests.pop(message_id_for_buttons, None)
     except yt_dlp.utils.ExtractorError as e:
         logger.warning(f"Ошибка извлечения для {url} в handle_url: {e}")
         await status_msg.edit_text(f"❌ Ошибка: Не удалось извлечь информацию для этой ссылки.\n`{e}`")
         active_url_requests.pop(message_id_for_buttons, None)
-    except yt_dlp.utils.DownloadError as e:
+    except yt_dlp.utils.DownloadError as e: # Ошибки, которые могут возникнуть при extract_info
         logger.error(f"Ошибка yt-dlp (info extraction) для {url}: {e}")
-        await status_msg.edit_text(f"❌ Ошибка при получении информации о видео:\n`{e}`")
+        await status_msg.edit_text(f"❌ Ошибка при получении информации о медиа:\n`{e}`")
         active_url_requests.pop(message_id_for_buttons, None)
     except Exception as e:
         logger.exception(f"Критическая ошибка в handle_url для {url} пользователя {message.from_user.id}: {e}")
         await status_msg.edit_text(f"❌ Произошла непредвиденная ошибка при обработке ссылки:\n`{e}`")
-        active_url_requests.pop(message_id_for_buttons, None) # Очищаем state при любой ошибке
+        active_url_requests.pop(message_id_for_buttons, None)
 
 
 # --- Обработчик нажатий Inline кнопок ---
-# [source: 20]
+# 
 @dp.callback_query(F.data.startswith('{'))
 async def handle_callback_query(query: types.CallbackQuery):
     """Обрабатывает нажатия на inline-кнопки."""
@@ -450,66 +500,87 @@ async def handle_callback_query(query: types.CallbackQuery):
         return
 
     message_id = query.message.message_id
-    # Извлекаем URL из нашего временного хранилища
     request_data = active_url_requests.get(message_id)
 
     if not request_data:
         await query.answer("❌ Запрос устарел или не найден. Пожалуйста, отправьте ссылку заново.", show_alert=True)
-        # Попытаемся убрать кнопки у старого сообщения
         try:
             await query.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass # Игнорируем ошибки редактирования старых сообщений
+        except TelegramBadRequest: pass # Игнорируем, если сообщение уже без кнопок или не может быть изменено
         return
 
     url = request_data['url']
-    # Очищаем state СРАЗУ после извлечения URL, чтобы избежать повторных нажатий
-    active_url_requests.pop(message_id, None)
+    original_title = request_data.get('title', 'медиафайл') # Извлекаем title
+    thumbnail_url_from_state = request_data.get('thumbnail_url')
+
+
+    # Убираем кнопки СРАЗУ после нажатия, чтобы предотвратить двойные нажатия
+    # И очищаем state, если действие не требует дополнительной информации из него (кроме URL и title)
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception as edit_error:
+        logger.warning(f"Не удалось убрать кнопки у сообщения {message_id}: {edit_error}")
+
 
     try:
         data = json.loads(query.data)
-        action = data.get("a") # Используем укороченное 'a'
+        action = data.get("a")
 
-        # Убираем кнопки после нажатия на любую из них
-        try:
-            await query.message.edit_reply_markup(reply_markup=None)
-        except Exception as edit_error:
-            logger.warning(f"Не удалось убрать кнопки у сообщения {message_id}: {edit_error}")
-
-
-        if action == "d": # download
-            format_id = data.get("f") # Используем укороченное 'f'
+        if action == "dv": # download_video
+            active_url_requests.pop(message_id, None) # Очищаем state
+            format_id = data.get("f")
             if not format_id:
-                await query.answer("❌ Ошибка: Не указан формат.", show_alert=True)
+                await query.answer("❌ Ошибка: Не указан формат видео.", show_alert=True)
                 return
+            await query.answer(f"🚀 Запускаю скачивание видео...")
+            # Передаем original_title в download_media
+            await download_media(query.message, url, user_id, original_title=original_title, format_id=format_id, download_type='video')
 
-            await query.answer(f"🚀 Запускаю скачивание...")
-            await download_media(query.message, url, user_id, format_id=format_id)
+        elif action == "da": # download_audio (MP3)
+            active_url_requests.pop(message_id, None) # Очищаем state
+            await query.answer("🎧 Запускаю скачивание MP3...")
+            # Передаем original_title в download_media
+            await download_media(query.message, url, user_id, original_title=original_title, download_type='audio')
 
         elif action == "t": # thumbnail
+            active_url_requests.pop(message_id, None)
             await query.answer("🖼️ Загружаю обложку...")
-            # Передаем query.message чтобы ответ был в том же чате
-            await send_thumbnail(query.message, url, user_id)
+            await send_thumbnail(query.message, url, user_id, thumbnail_url_from_state, original_title)
+
 
         else:
+            active_url_requests.pop(message_id, None) # Очищаем state для неизвестных действий
             await query.answer("Неизвестное действие.", show_alert=True)
             logger.warning(f"Получено неизвестное действие '{action}' в callback_data для сообщения {message_id}")
 
     except json.JSONDecodeError:
         logger.warning(f"Не удалось декодировать JSON из callback_data: {query.data} для сообщения {message_id}")
         await query.answer("❌ Ошибка обработки данных кнопки.", show_alert=True)
-        active_url_requests.pop(message_id, None) # Очистка state при ошибке
+        active_url_requests.pop(message_id, None)
     except Exception as e:
         logger.exception(f"Ошибка в handle_callback_query для пользователя {user_id}, сообщения {message_id}: {e}")
-        # [source: 21]
+        # 
         await query.answer("❌ Произошла ошибка при обработке вашего запроса.", show_alert=True)
-        active_url_requests.pop(message_id, None) # Очистка state при ошибке
+        active_url_requests.pop(message_id, None)
 
 
 # --- Отправка обложки ---
-async def send_thumbnail(message: types.Message, url: str, user_id: int):
-    """Извлекает URL обложки и отправляет ее пользователю."""
-    # Не используем status_msg, отвечаем прямо на исходное сообщение
+async def send_thumbnail(message: types.Message, url: str, user_id: int, thumbnail_url: str | None, title: str):
+    """Отправляет обложку пользователю."""
+    # Если thumbnail_url уже есть из state, используем его
+    if thumbnail_url:
+        try:
+            await message.answer_photo(
+                photo=thumbnail_url,
+                caption=f"Обложка для:\n*{title}*" if title else "Обложка",
+                parse_mode="Markdown"
+            )
+            return
+        except Exception as e:
+            logger.warning(f"Не удалось отправить обложку по URL из state ({thumbnail_url}): {e}. Попробую извлечь заново.")
+
+    # Если URL из state не сработал или его не было, извлекаем заново
+    status_msg = await message.answer("⏳ Получаю обложку...")
     try:
         ydl_opts_info = get_ydl_opts(user_id)
         ydl_opts_info['skip_download'] = True
@@ -519,24 +590,22 @@ async def send_thumbnail(message: types.Message, url: str, user_id: int):
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(url, download=False)
 
-        thumbnail_url = info.get('thumbnail')
-        title = info.get('title', 'video')
+        new_thumbnail_url = info.get('thumbnail')
+        # title уже есть из параметров функции
 
-        if thumbnail_url:
-            # Отправляем как новое сообщение в чат
+        if new_thumbnail_url:
+            await status_msg.delete() # Удаляем "Получаю обложку..."
             await message.answer_photo(
-                photo=thumbnail_url,
-                caption=f"Обложка для видео:\n*{title}*" if title else "Обложка для видео",
+                photo=new_thumbnail_url,
+                caption=f"Обложка для:\n*{title}*" if title else "Обложка",
                 parse_mode="Markdown"
             )
         else:
-            # Отправляем как новое сообщение в чат
-            await message.answer("❌ Не удалось найти обложку для этого видео.")
+            await status_msg.edit_text("❌ Не удалось найти обложку для этого медиа.")
 
     except Exception as e:
         logger.error(f"Ошибка при получении обложки для {url}: {e}")
-        # Отправляем как новое сообщение в чат
-        await message.answer(f"❌ Не удалось получить обложку: {e}")
+        await status_msg.edit_text(f"❌ Не удалось получить обложку: {e}")
 
 
 # --- Запуск бота ---
