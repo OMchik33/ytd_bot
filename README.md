@@ -89,7 +89,7 @@
 
 Добавляем туда код:
 ```bash
-*/10 * * * * find /download -type f -mmin +10 -exec rm -f {} \;
+*/5 * * * * find /download -type f -mmin +30 -delete
 ```
 Проверяем: `crontab -l`
 Применяем изменения в планировщике: `systemctl restart cron`
