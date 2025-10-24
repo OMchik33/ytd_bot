@@ -55,7 +55,6 @@ def sanitize_filename(title: str) -> str:
 
 
 def clean_youtube_url(url: str) -> str:
-    """Удаляет хвосты ?list=..., &index=..., &feature=... и прочее."""
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
     allowed_params = ['v', 't']
@@ -86,11 +85,17 @@ def get_ydl_opts(user_id: int, format_selection: str = None, download_type: str 
         'concurrent_fragment_downloads': 5,
         'noplaylist': True,
         'sleep_interval_requests': 1,
+        'po_token_providers': ['webpo'],
         'extractor_args': {
             'youtube': {
-                'player_client': ['web', 'android', 'tv', 'ios', 'mweb']
+                'player_client': ['android', 'android_sdkless', 'web_safari', 'tv']
             }
         },
+        'youtube_include_dash_manifest': True,
+        'youtube_include_dash_manifest': True,
+        'force_ipv4': True,
+        
+
     }
 
     # === аудио ===
@@ -104,22 +109,12 @@ def get_ydl_opts(user_id: int, format_selection: str = None, download_type: str 
 
     # === видео ===
     elif download_type == 'video':
-        opts['merge_output_format'] = 'mp4'
-
-        # 🎯 если пользователь выбрал конкретный формат — используем его
         if format_selection:
-            opts['format'] = f"{format_selection}+bestaudio[ext=m4a]/best[ext=mp4]/18"
+            opts['format'] = f"{format_selection}+bestaudio/best"
         else:
-            # иначе — скачиваем лучшее из mp4
-            opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18'
-
-        opts['postprocessors'] = [{
-            'key': 'FFmpegVideoConvertor',
-            'preferedformat': 'mp4',
-        }]
+            opts['format'] = 'bestvideo+bestaudio/best'
 
     return opts
-
 
 
 # ========================== #
@@ -153,10 +148,10 @@ async def show_help(message: types.Message):
     await message.answer(
         "*Инструкция для использования бота:*\n\n"
         "*⬇️ Скачать видео* - Нажмите эту кнопку, затем отправьте боту ссылку на видео.\n"
-        "  - Бот предложит выбрать качество видео (если доступно несколько вариантов >= 480p).\n"
+        "  - Бот предложит выбрать качество видео.\n"
         "  - Будет кнопка \"🎵 Скачать MP3\" для извлечения аудиодорожки.\n"
         "  - Будет кнопка \"🖼️ Обложка\" для скачивания превью.\n"
-        "*🍪 Cookies* - Используйте, если видео требует авторизации.\n"
+        "*🍪 Cookies* - Используйте, если видео требует авторизации или не скачивается.\n"
         "1. Установите [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc).\n"
         "2. Зайдите в аккаунт на нужном сайте.\n"
         "3. Нажмите иконку расширения -> Export (формат **Netscape**).\n"
@@ -168,7 +163,7 @@ async def show_help(message: types.Message):
 
 @dp.message(F.text == "🍪 Cookies")
 async def prompt_cookies(message: types.Message):
-    await message.answer("Отправьте сюда файл `cookies.txt` (формат Netscape).", parse_mode="Markdown")
+    await message.answer("Отправьте файл `cookies.txt` (формат Netscape).", parse_mode="Markdown")
 
 
 @dp.message(F.document & F.document.file_name.endswith('.txt'))
@@ -176,7 +171,7 @@ async def handle_cookie_file(message: types.Message):
     destination = COOKIES_PATH / f"cookies_{message.from_user.id}.txt"
     file_info = await bot.get_file(message.document.file_id)
     await bot.download_file(file_info.file_path, destination)
-    await message.answer("✅ Куки-файл сохранён. Теперь попробуйте снова.")
+    await message.answer("✅ Cookies сохранены.")
 
 
 # ========================== #
@@ -193,7 +188,7 @@ async def download_media(message: types.Message, url: str, user_id: int,
             info = ydl.extract_info(url, download=True)
             path = info.get('requested_downloads', [{}])[0].get('filepath')
             if not path or not os.path.exists(path):
-                await status.edit_text("❌ Файл не найден после скачивания.")
+                await status.edit_text("❌ Файл не найден.")
                 return
 
             ext = Path(path).suffix[1:]
@@ -212,7 +207,7 @@ async def download_media(message: types.Message, url: str, user_id: int,
 
     except Exception as e:
         logger.exception(e)
-        await status.edit_text(f"❌ Ошибка при скачивании:\n`{e}`", parse_mode="Markdown")
+        await status.edit_text(f"❌ Ошибка:\n`{e}`", parse_mode="Markdown")
 
 
 # ========================== #
@@ -225,7 +220,7 @@ async def handle_url(message: types.Message):
 
     url = clean_youtube_url(message.text.strip())
     user_id = message.from_user.id
-    status = await message.answer("🔎 Анализирую ссылку...")
+    status = await message.answer("🔎 Анализ ссылок...")
 
     builder = InlineKeyboardBuilder()
     thumbnail_url = None
@@ -242,74 +237,42 @@ async def handle_url(message: types.Message):
         thumbnail_url = info.get('thumbnail')
         title = info.get('title', title)
 
-        # 🟡 Если нет форматов — fallback
-        if not formats:
-            builder.button(text="🎵 Скачать MP3", callback_data=json.dumps({"a": "da"}))
-            if thumbnail_url:
-                builder.button(text="🖼️ Обложка", callback_data=json.dumps({"a": "t"}))
-            builder.adjust(2)
-
-            active_url_requests[status.message_id] = {
-                'url': url,
-                'timestamp': datetime.datetime.now(datetime.timezone.utc),
-                'title': title,
-                'thumbnail_url': thumbnail_url
-            }
-
-            await status.edit_text(
-                f"🎬 *{title}*\n\n"
-                "Видео-форматы не найдены, но можно скачать аудио (MP3) или обложку.",
-                reply_markup=builder.as_markup(),
-                parse_mode="Markdown"
-            )
-            return
-
-         # ✅ Собираем и фильтруем реальные видеоформаты (без storyboard и mhtml)
         available = {}
 
         for f in formats:
             fid = f.get("format_id")
             ext = f.get("ext", "")
-            height = f.get("height") or 0
+            height = f.get("height")
             vcodec = f.get("vcodec", "")
             acodec = f.get("acodec", "")
 
-            # 🚫 Пропускаем storyboard (mhtml) и фейковые форматы
             if not fid or "storyboard" in fid or ext == "mhtml":
                 continue
 
-            # 🚫 Пропускаем форматы без кодеков (служебные)
-            if not vcodec and not acodec:
+            if not height:
+                m = re.search(r'(\d{3,4})p', f.get("format", ""))
+                if m:
+                    height = int(m.group(1))
+
+            if not height:
                 continue
 
-            # 💾 Пытаемся получить размер файла
             size = f.get("filesize") or f.get("filesize_approx") or 0
 
-            # если размер неизвестен — вычисляем из битрейта и длительности
-            if not size:
-                duration = f.get("duration") or info.get("duration") or 0
-                tbr = f.get("tbr") or 0  # кбит/с
-                if duration > 0 and tbr > 0:
-                    size = tbr * 1000 * duration / 8  # -> байты
-
-            # 🎬 Формируем подпись кнопки
             if height:
                 label = f"{height}p {ext}"
             else:
                 label = ext.upper()
 
             if size:
-                # если размер получен через расчёт — добавляем тильду
-                approx = "~" if not f.get("filesize") else ""
                 mb = max(1, round(size / 1024 / 1024))
-                label += f" ({approx}{mb} МБ)"
+                label += f" (~{mb} МБ)"
 
             available[label] = fid
 
-        # Сортировка по высоте в порядке убывания
         for label, fid in sorted(
             available.items(),
-            key=lambda x: int(re.search(r'(\d+)p', x[0]).group(1)) if re.search(r'(\d+)p', x[0]) else 0,
+            key=lambda x: int(re.search(r'(\d+)p', x[0]).group(1)),
             reverse=True
         ):
             builder.button(
@@ -317,10 +280,8 @@ async def handle_url(message: types.Message):
                 callback_data=json.dumps({"a": "dv", "f": fid})
             )
 
-        # ⚙️ Разбиваем на ряды — видео по 2 в ряд
         builder.adjust(2)
 
-        # 🎵 Кнопка MP3 во всю ширину
         builder.row(
             types.InlineKeyboardButton(
                 text="🎵 Скачать MP3",
@@ -328,7 +289,6 @@ async def handle_url(message: types.Message):
             )
         )
 
-        # 🖼️ Кнопка обложки во всю ширину (если есть)
         if thumbnail_url:
             builder.row(
                 types.InlineKeyboardButton(
@@ -338,14 +298,11 @@ async def handle_url(message: types.Message):
             )
 
         msg = await status.edit_text(
-            f"Найдено медиа: *{title}*\n\nВыберите формат для скачивания:",
+            f"*{title}*\n\nВыберите формат:",
             reply_markup=builder.as_markup(),
             parse_mode="Markdown"
         )
 
-
-
-        # ✅ сохраняем актуальный message_id
         active_url_requests[msg.message_id] = {
             'url': url,
             'timestamp': datetime.datetime.now(datetime.timezone.utc),
@@ -355,8 +312,7 @@ async def handle_url(message: types.Message):
 
     except Exception as e:
         logger.exception(e)
-        await status.edit_text(f"❌ Произошла непредвиденная ошибка при обработке ссылки:\n`{e}`",
-                               parse_mode="Markdown")
+        await status.edit_text(f"❌ Ошибка:\n`{e}`", parse_mode="Markdown")
 
 
 # ========================== #
@@ -371,7 +327,7 @@ async def handle_callback(query: types.CallbackQuery):
 
         req = active_url_requests.get(msg_id)
         if not req:
-            await query.answer("Запрос устарел или не найден. Отправьте ссылку заново.", show_alert=True)
+            await query.answer("Запрос устарел.", show_alert=True)
             return
 
         url = req['url']
@@ -381,20 +337,20 @@ async def handle_callback(query: types.CallbackQuery):
         await query.message.edit_reply_markup(reply_markup=None)
 
         if data['a'] == 'dv':
-            await query.answer("🚀 Скачиваю видео...")
+            await query.answer("🚀 Скачиваю...")
             await download_media(query.message, url, user_id, title, format_id=data['f'], download_type='video')
         elif data['a'] == 'da':
-            await query.answer("🎧 Скачиваю MP3...")
+            await query.answer("🎧 MP3...")
             await download_media(query.message, url, user_id, title, download_type='audio')
         elif data['a'] == 't':
-            await query.answer("🖼️ Загружаю обложку...")
+            await query.answer("🖼️ Обложка...")
             if thumb:
                 await query.message.answer_photo(photo=thumb, caption=f"Обложка:\n*{title}*", parse_mode="Markdown")
             else:
-                await query.message.answer("❌ Обложка недоступна.")
+                await query.message.answer("❌ Нет обложки.")
     except Exception as e:
         logger.exception(e)
-        await query.message.answer(f"⚠️ Ошибка при обработке кнопки:\n`{e}`", parse_mode="Markdown")
+        await query.message.answer(f"⚠️ Ошибка кнопки:\n`{e}`", parse_mode="Markdown")
 
 
 # ========================== #
