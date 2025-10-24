@@ -79,7 +79,7 @@
 | ------------ | ------------ |
 | `python3 -m venv mybotenv`  | Создаем виртуальную среду mybotenv |
 | `source mybotenv/bin/activate` | Активируем виртуальную среду |
-| `pip install aiogram yt-dlp python-dotenv` | Устанавливаем необходимое ПО |
+| `pip install aiogram yt-dlp[default] python-dotenv` | Устанавливаем необходимое ПО |
 | `deactivate` | Выходим из виртуальной среды |
 
 5. **Добавляем в Crontab автоудаление скачанных более чем 30 минут назад файлов**
@@ -124,11 +124,11 @@ WantedBy=multi-user.target
 - Запускаем бот: `systemctl start ytd_bot.service`
 
 ## Важно:
-Если бот вообще перестал скачивать видео, активируйте виртуальную среду и обновите yt-dlp
+Если бот вообще перестал скачивать видео, активируйте виртуальную среду и обновите yt-dlp[default]
 
 ```
 source mybotenv/bin/activate
-pip install --upgrade yt-dlp
+pip install --upgrade yt-dlp[default]
 deactivate
 ```
 
@@ -144,7 +144,7 @@ deactivate
 | ------------ | ------------ |
 | Python | 3.12.3 |
 | aiogram  | 3.22.0 |
-|  yt-dlp  | 2025.9.26 |
+|  yt-dlp[default]  | 2025.9.26 |
 |  ffmpeg  | 6.1.1-3ubuntu5 |
 |  python-dotenv  | 1.1.1 |
 
