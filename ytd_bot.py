@@ -68,35 +68,57 @@ def get_cookie_file(user_id: int) -> Path | None:
     return cookie_file if cookie_file.exists() else None
 
 
-def get_ydl_opts(user_id: int, format_selection: str = None, download_type: str = 'video') -> dict:
+def get_ydl_opts(
+    user_id: int,
+    format_selection: str | None = None,
+    download_type: str = "video",
+) -> dict:
     cookie_file = get_cookie_file(user_id)
-    opts = {
-        'outtmpl': str(DOWNLOAD_PATH / '%(id)s.%(ext)s'),
-        'quiet': False,
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        'retries': 5,
-        'cookiefile': str(cookie_file) if cookie_file else None,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                          'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
-        },
-        'fragment_retries': 10,
-        'concurrent_fragment_downloads': 5,
-        'noplaylist': True,
-        'sleep_interval_requests': 1,
-        'po_token_providers': ['webpo'],
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'android_sdkless', 'web_safari', 'tv']
-            }
-        },
-        'youtube_include_dash_manifest': True,
-        'youtube_include_dash_manifest': True,
-        'force_ipv4': True,
-        
 
+    opts: dict = {
+        "outtmpl": str(DOWNLOAD_PATH / "%(id)s.%(ext)s"),
+        "quiet": False,
+        "nocheckcertificate": True,
+        "geo_bypass": True,
+        "retries": 5,
+        "js_runtimes": {"node": {}},
+        "format_sort": ["proto:https"],
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            )
+        },
+        "fragment_retries": 10,
+        "concurrent_fragment_downloads": 5,
+        "noplaylist": True,
+        "sleep_interval_requests": 1,
+        "force_ipv4": True,
     }
+
+    if cookie_file:
+        opts["cookiefile"] = str(cookie_file)
+
+    # === аудио ===
+    if download_type == "audio":
+        opts["format"] = "bestaudio/best"
+        opts["postprocessors"] = [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }
+        ]
+
+    # === видео ===
+    else:
+        if format_selection:
+            opts["format"] = f"{format_selection}+bestaudio/best"
+        else:
+            opts["format"] = "bestvideo+bestaudio/best"
+
+    return opts
 
     # === аудио ===
     if download_type == 'audio':
@@ -110,9 +132,9 @@ def get_ydl_opts(user_id: int, format_selection: str = None, download_type: str 
     # === видео ===
     elif download_type == 'video':
         if format_selection:
-            opts['format'] = f"{format_selection}+bestaudio/best"
+            opts['format'] = f"{format_selection}+bestaudio[protocol=https]/best[protocol=https]"
         else:
-            opts['format'] = 'bestvideo+bestaudio/best'
+            opts['format'] = "bestvideo[protocol=https]+bestaudio[protocol=https]/best[protocol=https]"
 
     return opts
 
@@ -185,6 +207,7 @@ async def download_media(message: types.Message, url: str, user_id: int,
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
+            logger.info(f"Downloading url={url} type={download_type} format_id={format_id}")
             info = ydl.extract_info(url, download=True)
             path = info.get('requested_downloads', [{}])[0].get('filepath')
             if not path or not os.path.exists(path):
@@ -228,29 +251,40 @@ async def handle_url(message: types.Message):
 
     try:
         opts = get_ydl_opts(user_id)
-        opts.update({'skip_download': True, 'quiet': True, 'no_warnings': True, 'noplaylist': True})
+        opts.update({
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+        })
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
-        formats = info.get('formats') or []
-        thumbnail_url = info.get('thumbnail')
-        title = info.get('title', title)
+        formats = info.get("formats") or []
+        thumbnail_url = info.get("thumbnail")
+        title = info.get("title", title)
 
-        available = {}
+        available: dict[str, str] = {}
 
         for f in formats:
             fid = f.get("format_id")
             ext = f.get("ext", "")
             height = f.get("height")
-            vcodec = f.get("vcodec", "")
-            acodec = f.get("acodec", "")
 
+            # --- ВАЖНО: фильтр против HLS/m3u8 ---
+            protocol = (f.get("protocol") or "").lower()
+            manifest_url = (f.get("manifest_url") or "").lower()
+            if ("m3u8" in protocol) or ("hls" in protocol) or ("m3u8" in manifest_url):
+                continue
+            # -------------------------------------
+
+            # отсекаем мусорные форматы
             if not fid or "storyboard" in fid or ext == "mhtml":
                 continue
 
             if not height:
-                m = re.search(r'(\d{3,4})p', f.get("format", ""))
+                m = re.search(r"(\d{3,4})p", f.get("format", ""))
                 if m:
                     height = int(m.group(1))
 
@@ -259,11 +293,7 @@ async def handle_url(message: types.Message):
 
             size = f.get("filesize") or f.get("filesize_approx") or 0
 
-            if height:
-                label = f"{height}p {ext}"
-            else:
-                label = ext.upper()
-
+            label = f"{height}p {ext}"
             if size:
                 mb = max(1, round(size / 1024 / 1024))
                 label += f" (~{mb} МБ)"
@@ -272,7 +302,7 @@ async def handle_url(message: types.Message):
 
         for label, fid in sorted(
             available.items(),
-            key=lambda x: int(re.search(r'(\d+)p', x[0]).group(1)),
+            key=lambda x: int(re.search(r"(\d+)p", x[0]).group(1)),
             reverse=True
         ):
             builder.button(
@@ -304,10 +334,10 @@ async def handle_url(message: types.Message):
         )
 
         active_url_requests[msg.message_id] = {
-            'url': url,
-            'timestamp': datetime.datetime.now(datetime.timezone.utc),
-            'title': title,
-            'thumbnail_url': thumbnail_url
+            "url": url,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc),
+            "title": title,
+            "thumbnail_url": thumbnail_url,
         }
 
     except Exception as e:
