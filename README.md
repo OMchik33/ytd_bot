@@ -1,3 +1,5 @@
+![Last Update](https://img.shields.io/github/last-commit/USER_NAME/REPO_NAME?style=for-the-badge&color=blue)
+
 # ОБНОВЛЕНИЯ:
 - **05.02.2026** - Правка кода, бот снова скачивает! Нужно nodejs и yt-dlp-ejs
 - **27.01.2026** - Правки кода, бот снова скачивает
