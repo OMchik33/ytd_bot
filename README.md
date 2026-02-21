@@ -1,4 +1,4 @@
-![Last Update](https://img.shields.io/github/last-commit/OMchik33/ytd_bot?style=for-the-badge&color=blue)
+![Last Update](https://img.shields.io/github/last-commit/OMchik33/ytd_bot?style=for-the-badge&color=blue&logo=github)
 
 # ОБНОВЛЕНИЯ:
 - **05.02.2026** - Правка кода, бот снова скачивает! Нужно nodejs и yt-dlp-ejs
