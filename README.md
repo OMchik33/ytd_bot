@@ -135,7 +135,7 @@ WantedBy=multi-user.target
 
 ```
 source mybotenv/bin/activate
-pip install --upgrade yt-dlp[default]
+pip install --upgrade yt-dlp yt-dlp-ejs
 deactivate
 ```
 
