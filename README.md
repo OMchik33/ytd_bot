@@ -131,7 +131,7 @@ WantedBy=multi-user.target
 - Запускаем бот: `systemctl start ytd_bot.service`
 
 ## Важно:
-Если бот вообще перестал скачивать видео, активируйте виртуальную среду и обновите yt-dlp[default]
+Если бот вообще перестал скачивать видео, активируйте виртуальную среду и обновите yt-dlp
 
 ```
 source mybotenv/bin/activate
