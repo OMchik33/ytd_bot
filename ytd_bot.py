@@ -137,9 +137,8 @@ def build_base_ydl_opts(user_id: int, *, skip_download: bool, quiet: bool) -> di
         "continuedl": True,
         "force_ipv4": True,
 
-        # SABR/HLS/прочие “странные” случаи: не падать, а вернуть что есть
+        # SABR/HLS/прочие “странные” случаи
         "ignore_no_formats_error": True,
-        "allow_unplayable_formats": True,
 
         "http_headers": {
             "User-Agent": (
@@ -172,14 +171,12 @@ def get_format_string(mode: str, format_id: str | None) -> str:
     Формат-строки делаем мягкими с fallback.
     """
     if mode == "pick":
-        return f"{format_id}+bestaudio/best"
+        return f"{format_id}+bestaudio[ext=m4a]/best[ext=mp4]/best"
 
     if mode == "safe":
-        # частый победитель: mp4 progressive; если нет — любой best
         return "best[ext=mp4]/best"
 
     if mode == "bestq":
-        # пытаемся mp4 video + m4a audio; иначе mp4 best; иначе best
         return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
 
     if mode == "any":
@@ -198,19 +195,49 @@ def ydl_extract(url: str, opts: dict, *, download: bool):
 
 def find_downloaded_file(info: dict) -> str | None:
     """
-    Пытаемся найти итоговый файл после download=True.
+    Пытаемся найти именно итоговый файл после download=True.
+    Сначала предпочитаем merged/final path из info,
+    а промежуточные .fXXX.* берём только как крайний fallback.
     """
-    path = None
+
+    def existing(path: str | None) -> str | None:
+        if path and os.path.exists(path):
+            return path
+        return None
+
+    # 1) requested_downloads: в нём часто уже есть итоговый filepath
     rds = info.get("requested_downloads") or []
-    if rds and isinstance(rds, list):
-        path = rds[0].get("filepath")
+    if isinstance(rds, list):
+        for item in rds:
+            for key in ("filepath", "filename", "_filename"):
+                path = existing(item.get(key))
+                if path:
+                    name = os.path.basename(path)
+                    # предпочитаем НЕ промежуточные файлы .f137.mp4
+                    if not re.search(r"\.f\d+\.", name):
+                        return path
 
-    if not path:
-        path = info.get("_filename")
+        # если нашли только промежуточные — запомним как запасной вариант
+        for item in rds:
+            for key in ("filepath", "filename", "_filename"):
+                path = existing(item.get(key))
+                if path:
+                    return path
 
-    if path and os.path.exists(path):
-        return path
+    # 2) поля верхнего уровня info
+    for key in ("filepath", "filename", "_filename"):
+        path = existing(info.get(key))
+        if path:
+            name = os.path.basename(path)
+            if not re.search(r"\.f\d+\.", name):
+                return path
 
+    for key in ("filepath", "filename", "_filename"):
+        path = existing(info.get(key))
+        if path:
+            return path
+
+    # 3) fallback по id в папке
     vid = info.get("id")
     if not vid:
         return None
@@ -219,6 +246,17 @@ def find_downloaded_file(info: dict) -> str | None:
     candidates = [p for p in candidates if not str(p).endswith(".part")]
     if not candidates:
         return None
+
+    # сначала пробуем взять не-промежуточный файл
+    final_candidates = [
+        p for p in candidates
+        if not re.search(r"\.f\d+\.", p.name)
+    ]
+    if final_candidates:
+        final_candidates.sort(key=lambda p: p.stat().st_size, reverse=True)
+        return str(final_candidates[0])
+
+    # если ничего лучше нет — берём самый крупный
     candidates.sort(key=lambda p: p.stat().st_size, reverse=True)
     return str(candidates[0])
 
